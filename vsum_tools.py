@@ -91,7 +91,7 @@ def evaluate_summary(machine_summary, user_summary, eval_metric='avg'):
     """
     machine_summary = machine_summary.astype(np.float32)
     user_summary = user_summary.astype(np.float32)
-    n_users,n_frames = user_summary.shape
+    n_frames = len(user_summary)
 
     # binarization
     machine_summary[machine_summary > 0] = 1
@@ -107,75 +107,56 @@ def evaluate_summary(machine_summary, user_summary, eval_metric='avg'):
     prec_arr = []
     rec_arr = []
 
-    for user_idx in range(n_users):
-        gt_summary = user_summary[user_idx,:]
-        overlap_duration = (machine_summary * gt_summary).sum()
-        precision = overlap_duration / (machine_summary.sum() + 1e-8)
-        recall = overlap_duration / (gt_summary.sum() + 1e-8)
-        if precision == 0 and recall == 0:
-            f_score = 0.
-        else:
-            f_score = (2 * precision * recall) / (precision + recall)
-        f_scores.append(f_score)
-        prec_arr.append(precision)
-        rec_arr.append(recall)
+    overlap_duration = (machine_summary * user_summary).sum()
+    precision = overlap_duration / (machine_summary.sum() + 1e-8)
+    recall = overlap_duration / (user_summary.sum() + 1e-8)
+    if precision == 0 and recall == 0:
+        f_score = 0.
+    else:
+        f_score = (2 * precision * recall) / (precision + recall)
 
-    if eval_metric == 'avg':
-        final_f_score = np.mean(f_scores)
-        final_prec = np.mean(prec_arr)
-        final_rec = np.mean(rec_arr)
-    elif eval_metric == 'max':
-        final_f_score = np.max(f_scores)
-        max_idx = np.argmax(f_scores)
-        final_prec = prec_arr[max_idx]
-        final_rec = rec_arr[max_idx]
     
-    return final_f_score, final_prec, final_rec
+    return f_score, precision, recall
 
-
-def evaluate_user_summaries(user_summary, eval_metric='avg'):
-    """Compare machine summary with user summary (keyshot-based).
-    Args:
-    --------------------------------
-    machine_summary and user_summary should be binary vectors of ndarray type.
-    eval_metric = {'avg', 'max'}
-    'avg' averages results of comparing multiple human summaries.
-    'max' takes the maximum (best) out of multiple comparisons.
+    
+def coverage_count(vid, uid, predicted_summary, user_summary, video_boundary, sum_ratio):
+    """ #TODO
+    :param ndarray predicted_summary: The generated summary from our model.
+    :param ndarray user_summary: The user defined ground truth summaries (or summary).
+    :return: The reduced fscore based on the eval_method
     """
-    user_summary = user_summary.astype(np.float32)
-    n_users, n_frames = user_summary.shape
+    max_len = max(len(predicted_summary), len(user_summary))
+    S = np.zeros(max_len, dtype=int)
+    G = np.zeros(max_len, dtype=int)
+    S[:len(predicted_summary)] = predicted_summary
+    G[:len(user_summary)] = user_summary
 
-    # binarization
-    user_summary[user_summary > 0] = 1
+    G_split = np.split(G, video_boundary + 1)[:-1] # last element is empty
+    S_split = np.split(S, video_boundary + 1)[:-1] # last element is empty 
 
-    f_scores = []
-    prec_arr = []
-    rec_arr = []
+    # for dataframe
+    raw_data = {}
+    raw_data['video_id'] = vid
+    raw_data['user_id'] = int(uid)
+    raw_data['sum_ratio'] = sum_ratio
 
-    for user_idx in range(n_users):
-        gt_summary = user_summary[user_idx, :]
-        for other_user_idx in range(user_idx+1, n_users):
-            other_gt_summary = user_summary[other_user_idx, :]
-            overlap_duration = (other_gt_summary * gt_summary).sum()
-            precision = overlap_duration / (other_gt_summary.sum() + 1e-8)
-            recall = overlap_duration / (gt_summary.sum() + 1e-8)
-            if precision == 0 and recall == 0:
-                f_score = 0.
-            else:
-                f_score = (2 * precision * recall) / (precision + recall)
-            f_scores.append(f_score)
-            prec_arr.append(precision)
-            rec_arr.append(recall)
+    for i, g_seg in enumerate(G_split):
+        s_seg = S_split[i]
+        # print(f'len(s_seg) : {len(s_seg)}')
+        # print(f'len(g_seg) : {len(g_seg)}')
 
+        n_pred_s_frame = np.count_nonzero(s_seg) # number of summary frames of predicted summary
+        n_gt_s_frame = np.count_nonzero(g_seg)
+        seg_sum_ratio = n_pred_s_frame / len(g_seg)
+        overlapped = s_seg & g_seg
+        n_overlapped = np.count_nonzero(overlapped)
 
-    if eval_metric == 'avg':
-        final_f_score = np.mean(f_scores)
-        final_prec = np.mean(prec_arr)
-        final_rec = np.mean(rec_arr)
-    elif eval_metric == 'max':
-        final_f_score = np.max(f_scores)
-        max_idx = np.argmax(f_scores)
-        final_prec = prec_arr[max_idx]
-        final_rec = rec_arr[max_idx]
-
-    return final_f_score, final_prec, final_rec
+        raw_data[f'v{i+1}_frames'] = len(g_seg) # 해당 비디오 세그먼트의 총 프레임 수
+        raw_data[f'v{i+1}_pred_frames'] = n_pred_s_frame # 해당 세그먼트 내에서 machine summary가 sumamry라고 예측한 프레임 개수
+        raw_data[f'v{i+1}_gt_frames'] = n_gt_s_frame # 해당 세그먼트 내에서 gt summary가 sumamry라고 예측한 프레임 개수
+        raw_data[f'v{i+1}_n_overlap'] = n_overlapped
+        raw_data[f'v{i+1}_overlap_ratio'] = n_overlapped / (n_gt_s_frame + 1e-6) # to avoid divide by zero error
+        raw_data[f'v{i+1}_pred_sum_ratio'] = n_pred_s_frame / len(s_seg)
+        raw_data[f'v{i+1}_gt_sum_ratio'] = n_gt_s_frame / len(g_seg)
+        
+    return raw_data
