@@ -131,7 +131,7 @@ def torch_summarize(model, show_weights=True, show_parameters=True):
     return tmpstr, parameters, convs
 
 
-def print_table(table, cell_width=[3,35,8]):
+def print_table(table, cell_width=[3,8, 35,8]):
     slen=sum(cell_width)+len(cell_width)*2+2
     print('-'*slen)
     header = table.pop(0)
